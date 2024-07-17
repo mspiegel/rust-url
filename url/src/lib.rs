@@ -73,6 +73,14 @@ assert!(data_url.fragment() == Some(""));
 # run().unwrap();
 ```
 
+## Default Features
+
+Versions `<= 2.5.2` of the crate have no default features. Versions `> 2.5.2` have the default feature 'std'.
+If you are upgrading across this boundary and you have specified `default-features = false`, then
+you will need to add the 'std' feature or the 'alloc' feature to your dependency.
+The 'std' feature has the same behavior as the previous versions. The 'alloc' feature
+provides no_std support.
+
 ## Serde
 
 Enable the `serde` feature to include `Deserialize` and `Serialize` implementations for `url::Url`.
@@ -139,6 +147,21 @@ url = { version = "2", features = ["debugger_visualizer"] }
     feature = "debugger_visualizer",
     debugger_visualizer(natvis_file = "../../debug_metadata/url.natvis")
 )]
+#![cfg_attr(not(feature = "std"), no_std)]
+
+// Use std_core_compat for dependencies that
+// are in std in the Minimum Supported Rust Version
+// and in core in the latest stable release.
+#[cfg(feature = "std")]
+extern crate std as std_core_compat;
+
+#[cfg(not(feature = "std"))]
+extern crate core as std_core_compat;
+
+extern crate alloc;
+
+#[cfg(not(feature = "alloc"))]
+compile_error!("the `alloc` feature must currently be enabled");
 
 pub use form_urlencoded;
 
@@ -149,22 +172,22 @@ use crate::host::HostInternal;
 use crate::parser::{
     to_u32, Context, Parser, SchemeType, PATH_SEGMENT, SPECIAL_PATH_SEGMENT, USERINFO,
 };
+use core::borrow::Borrow;
+use core::cmp;
+use core::fmt::{self, Write};
+use core::hash;
+use core::mem;
+use core::ops::{Range, RangeFrom, RangeTo};
+use core::str;
 use percent_encoding::{percent_decode, percent_encode, utf8_percent_encode};
-use std::borrow::Borrow;
-use std::cmp;
-use std::fmt::{self, Write};
-use std::hash;
-#[cfg(any(unix, windows, target_os = "redox", target_os = "wasi"))]
-use std::io;
-use std::mem;
-use std::net::IpAddr;
-#[cfg(any(unix, windows, target_os = "redox", target_os = "wasi"))]
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::ops::{Range, RangeFrom, RangeTo};
-use std::path::{Path, PathBuf};
-use std::str;
+use std_core_compat::net::IpAddr;
 
-use std::convert::TryFrom;
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+
+use core::convert::TryFrom;
 
 pub use crate::host::Host;
 pub use crate::origin::{OpaqueOrigin, Origin};
@@ -1276,11 +1299,16 @@ impl Url {
     ///     })
     /// }
     /// ```
-    #[cfg(any(unix, windows, target_os = "redox", target_os = "wasi"))]
+    #[cfg(all(
+        feature = "std",
+        any(unix, windows, target_os = "redox", target_os = "wasi")
+    ))]
     pub fn socket_addrs(
         &self,
         default_port_number: impl Fn() -> Option<u16>,
-    ) -> io::Result<Vec<SocketAddr>> {
+    ) -> std::io::Result<Vec<std::net::SocketAddr>> {
+        use std::io;
+        use std::net::ToSocketAddrs;
         // Note: trying to avoid the Vec allocation by returning `impl AsRef<[SocketAddr]>`
         // causes borrowck issues because the return value borrows `default_port_number`:
         //
@@ -2466,9 +2494,12 @@ impl Url {
     /// # run().unwrap();
     /// # }
     /// ```
-    #[cfg(any(unix, windows, target_os = "redox", target_os = "wasi"))]
+    #[cfg(all(
+        feature = "std",
+        any(unix, windows, target_os = "redox", target_os = "wasi")
+    ))]
     #[allow(clippy::result_unit_err)]
-    pub fn from_file_path<P: AsRef<Path>>(path: P) -> Result<Url, ()> {
+    pub fn from_file_path<P: AsRef<std::path::Path>>(path: P) -> Result<Url, ()> {
         let mut serialization = "file://".to_owned();
         let host_start = serialization.len() as u32;
         let (host_end, host) = path_to_file_url_segments(path.as_ref(), &mut serialization)?;
@@ -2503,9 +2534,12 @@ impl Url {
     ///
     /// Note that `std::path` does not consider trailing slashes significant
     /// and usually does not include them (e.g. in `Path::parent()`).
-    #[cfg(any(unix, windows, target_os = "redox", target_os = "wasi"))]
+    #[cfg(all(
+        feature = "std",
+        any(unix, windows, target_os = "redox", target_os = "wasi")
+    ))]
     #[allow(clippy::result_unit_err)]
-    pub fn from_directory_path<P: AsRef<Path>>(path: P) -> Result<Url, ()> {
+    pub fn from_directory_path<P: AsRef<std::path::Path>>(path: P) -> Result<Url, ()> {
         let mut url = Url::from_file_path(path)?;
         if !url.serialization.ends_with('/') {
             url.serialization.push('/')
@@ -2620,9 +2654,12 @@ impl Url {
     /// (That is, if the percent-decoded path contains a NUL byte or,
     /// for a Windows path, is not UTF-8.)
     #[inline]
-    #[cfg(any(unix, windows, target_os = "redox", target_os = "wasi"))]
+    #[cfg(all(
+        feature = "std",
+        any(unix, windows, target_os = "redox", target_os = "wasi")
+    ))]
     #[allow(clippy::result_unit_err)]
-    pub fn to_file_path(&self) -> Result<PathBuf, ()> {
+    pub fn to_file_path(&self) -> Result<std::path::PathBuf, ()> {
         if let Some(segments) = self.path_segments() {
             let host = match self.host() {
                 None | Some(Host::Domain("localhost")) => None,
@@ -2824,9 +2861,9 @@ impl<'de> serde::Deserialize<'de> for Url {
     }
 }
 
-#[cfg(any(unix, target_os = "redox", target_os = "wasi"))]
+#[cfg(all(feature = "std", any(unix, target_os = "redox", target_os = "wasi")))]
 fn path_to_file_url_segments(
-    path: &Path,
+    path: &std::path::Path,
     serialization: &mut String,
 ) -> Result<(u32, HostInternal), ()> {
     #[cfg(any(unix, target_os = "redox"))]
@@ -2854,9 +2891,9 @@ fn path_to_file_url_segments(
     Ok((host_end, HostInternal::None))
 }
 
-#[cfg(windows)]
+#[cfg(all(feature = "std", windows))]
 fn path_to_file_url_segments(
-    path: &Path,
+    path: &std::path::Path,
     serialization: &mut String,
 ) -> Result<(u32, HostInternal), ()> {
     path_to_file_url_segments_windows(path, serialization)
@@ -2864,8 +2901,9 @@ fn path_to_file_url_segments(
 
 // Build this unconditionally to alleviate https://github.com/servo/rust-url/issues/102
 #[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(feature = "std")]
 fn path_to_file_url_segments_windows(
-    path: &Path,
+    path: &std::path::Path,
     serialization: &mut String,
 ) -> Result<(u32, HostInternal), ()> {
     use std::path::{Component, Prefix};
@@ -2926,16 +2964,17 @@ fn path_to_file_url_segments_windows(
     Ok((host_end, host_internal))
 }
 
-#[cfg(any(unix, target_os = "redox", target_os = "wasi"))]
+#[cfg(all(feature = "std", any(unix, target_os = "redox", target_os = "wasi")))]
 fn file_url_segments_to_pathbuf(
     host: Option<&str>,
     segments: str::Split<'_, char>,
-) -> Result<PathBuf, ()> {
+) -> Result<std::path::PathBuf, ()> {
     use std::ffi::OsStr;
     #[cfg(any(unix, target_os = "redox"))]
     use std::os::unix::prelude::OsStrExt;
     #[cfg(target_os = "wasi")]
     use std::os::wasi::prelude::OsStrExt;
+    use std::path::PathBuf;
 
     if host.is_some() {
         return Err(());
@@ -2971,20 +3010,21 @@ fn file_url_segments_to_pathbuf(
     Ok(path)
 }
 
-#[cfg(windows)]
+#[cfg(all(feature = "std", windows))]
 fn file_url_segments_to_pathbuf(
     host: Option<&str>,
     segments: str::Split<char>,
-) -> Result<PathBuf, ()> {
+) -> Result<std::path::PathBuf, ()> {
     file_url_segments_to_pathbuf_windows(host, segments)
 }
 
 // Build this unconditionally to alleviate https://github.com/servo/rust-url/issues/102
 #[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(feature = "std")]
 fn file_url_segments_to_pathbuf_windows(
     host: Option<&str>,
     mut segments: str::Split<'_, char>,
-) -> Result<PathBuf, ()> {
+) -> Result<std::path::PathBuf, ()> {
     let mut string = if let Some(host) = host {
         r"\\".to_owned() + host
     } else {
@@ -3024,7 +3064,7 @@ fn file_url_segments_to_pathbuf_windows(
             Err(..) => return Err(()),
         }
     }
-    let path = PathBuf::from(string);
+    let path = std::path::PathBuf::from(string);
     debug_assert!(
         path.is_absolute(),
         "to_file_path() failed to produce an absolute Path"

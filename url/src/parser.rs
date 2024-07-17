@@ -6,9 +6,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::error::Error;
-use std::fmt::{self, Formatter, Write};
-use std::str;
+use alloc::string::String;
+use alloc::string::ToString;
+use core::fmt::{self, Formatter, Write};
+use core::str;
+use std_core_compat::error::Error;
 
 use crate::host::{Host, HostInternal};
 use crate::Url;
